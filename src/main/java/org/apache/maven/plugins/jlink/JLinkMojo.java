@@ -269,7 +269,7 @@ public class JLinkMojo
         File jmodsFolder;
         if ( sourceJdkModules != null && sourceJdkModules.isDirectory() )
         {
-            jmodsFolder = new File ( sourceJdkModules, JMODS );
+            jmodsFolder = new File( sourceJdkModules, JMODS );
         }
         else
         {
@@ -378,7 +378,7 @@ public class JLinkMojo
                 }
 
                 // Don't warn for automatic modules, let the jlink tool do that
-                getLog().debug(" module: " + value.name() + " automatic: " + value.isAutomatic());
+                getLog().debug( " module: " + value.name() + " automatic: " + value.isAutomatic() );
                 if ( modulepathElements.containsKey( value.name() ) )
                 {
                     getLog().warn( "The module name " + value.name() + " does already exists." );
@@ -413,7 +413,7 @@ public class JLinkMojo
                 }
             }
 
-        }   
+        }
         catch ( IOException e )
         {
             getLog().error( e.getMessage() );
