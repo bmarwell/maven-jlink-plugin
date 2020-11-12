@@ -19,17 +19,7 @@ package org.apache.maven.plugins.jlink;
  * under the License.
  */
 
-import java.io.File;
-import java.io.IOException;
-import java.io.PrintStream;
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Map.Entry;
-
+import org.apache.commons.lang3.SystemUtils;
 import org.apache.maven.artifact.Artifact;
 import org.apache.maven.plugin.MojoExecutionException;
 import org.apache.maven.plugin.MojoFailureException;
@@ -51,15 +41,30 @@ import org.codehaus.plexus.languages.java.jpms.ResolvePathsResult;
 import org.codehaus.plexus.util.FileUtils;
 import org.codehaus.plexus.util.cli.Commandline;
 
+import java.io.File;
+import java.io.IOException;
+import java.io.PrintStream;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Map.Entry;
+import java.util.spi.ToolProvider;
+
 /**
  * The JLink goal is intended to create a Java Run Time Image file based on
  * <a href="http://openjdk.java.net/jeps/282">http://openjdk.java.net/jeps/282</a>,
  * <a href="http://openjdk.java.net/jeps/220">http://openjdk.java.net/jeps/220</a>.
- * 
+ *
  * @author Karl Heinz Marbaise <a href="mailto:khmarbaise@apache.org">khmarbaise@apache.org</a>
  */
 // CHECKSTYLE_OFF: LineLength
-@Mojo( name = "jlink", requiresDependencyResolution = ResolutionScope.RUNTIME, defaultPhase = LifecyclePhase.PACKAGE, requiresProject = true )
+@Mojo( name = "jlink",
+       requiresDependencyResolution = ResolutionScope.RUNTIME,
+       defaultPhase = LifecyclePhase.PACKAGE,
+       requiresProject = true )
 // CHECKSTYLE_ON: LineLength
 public class JLinkMojo
     extends AbstractJLinkMojo
@@ -278,26 +283,19 @@ public class JLinkMojo
         throws MojoExecutionException, MojoFailureException
     {
 
-        String jLinkExec = getExecutable();
+        ToolProvider jLinkExec = getExecutable();
 
         getLog().info( "Toolchain in maven-jlink-plugin: jlink [ " + jLinkExec + " ]" );
 
-        // TODO: Find a more better and cleaner way?
-        File jLinkExecuteable = new File( jLinkExec );
-
-        // Really Hacky...do we have a better solution to find the jmods directory of the JDK?
-        File jLinkParent = jLinkExecuteable.getParentFile().getParentFile();
         File jmodsFolder;
         if ( sourceJdkModules != null && sourceJdkModules.isDirectory() )
         {
-            jmodsFolder = new File ( sourceJdkModules, JMODS );
+            jmodsFolder = new File( sourceJdkModules, JMODS );
         }
         else
         {
-            jmodsFolder = new File( jLinkParent, JMODS );
+            jmodsFolder = new File( SystemUtils.getJavaHome(), JMODS );
         }
-
-        getLog().debug( " Parent: " + jLinkParent.getAbsolutePath() );
         getLog().debug( " jmodsFolder: " + jmodsFolder.getAbsolutePath() );
 
         failIfParametersAreNotInTheirValidValueRanges();
@@ -337,16 +335,15 @@ public class JLinkMojo
         {
             throw new MojoExecutionException( e.getMessage() );
         }
-        cmd.setExecutable( jLinkExec );
 
-        executeCommand( cmd, outputDirectoryImage );
+        executeCommand( jLinkExec, outputDirectory, cmd.getArguments() );
 
         File createZipArchiveFromImage = createZipArchiveFromImage( buildDirectory, outputDirectoryImage );
 
         if ( projectHasAlreadySetAnArtifact() )
         {
-            throw new MojoExecutionException( "You have to use a classifier "
-                + "to attach supplemental artifacts to the project instead of replacing them." );
+            throw new MojoExecutionException(
+                    "You have to use a classifier " + "to attach supplemental artifacts to the project instead of replacing them." );
         }
 
         getProject().getArtifact().setFile( createZipArchiveFromImage );
@@ -443,10 +440,9 @@ public class JLinkMojo
         return modulepathElements;
     }
 
-    private String getExecutable()
-        throws MojoFailureException
+    private ToolProvider getExecutable() throws MojoFailureException
     {
-        String jLinkExec;
+        ToolProvider jLinkExec;
         try
         {
             jLinkExec = getJLinkExecutable();

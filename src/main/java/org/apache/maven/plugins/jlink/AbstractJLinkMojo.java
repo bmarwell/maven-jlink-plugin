@@ -19,15 +19,6 @@ package org.apache.maven.plugins.jlink;
  * under the License.
  */
 
-import java.io.File;
-import java.io.IOException;
-import java.lang.reflect.Method;
-import java.util.Collection;
-import java.util.List;
-import java.util.Map;
-import java.util.Properties;
-
-import org.apache.commons.lang3.SystemUtils;
 import org.apache.maven.execution.MavenSession;
 import org.apache.maven.plugin.AbstractMojo;
 import org.apache.maven.plugin.MojoExecutionException;
@@ -37,9 +28,25 @@ import org.apache.maven.project.MavenProject;
 import org.apache.maven.toolchain.Toolchain;
 import org.apache.maven.toolchain.ToolchainManager;
 import org.codehaus.plexus.util.StringUtils;
-import org.codehaus.plexus.util.cli.CommandLineException;
-import org.codehaus.plexus.util.cli.CommandLineUtils;
-import org.codehaus.plexus.util.cli.Commandline;
+
+import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.IOException;
+import java.io.PrintWriter;
+import java.lang.reflect.Method;
+import java.nio.file.Files;
+import java.nio.file.Paths;
+import java.util.ArrayDeque;
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.Deque;
+import java.util.List;
+import java.util.Map;
+import java.util.NoSuchElementException;
+import java.util.Optional;
+import java.util.spi.ToolProvider;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 /**
  * @author Karl Heinz Marbaise <a href="mailto:khmarbaise@apache.org">khmarbaise@apache.org</a>
@@ -66,104 +73,48 @@ public abstract class AbstractJLinkMojo
     @Component
     private ToolchainManager toolchainManager;
 
-    protected String getJLinkExecutable()
-        throws IOException
+    protected ToolProvider getJLinkExecutable() throws IOException
     {
-        Toolchain tc = getToolchain();
+        Optional<ToolProvider> jlink = ToolProvider.findFirst( "jlink" );
 
-        String jLinkExecutable = null;
-        if ( tc != null )
+        if ( !jlink.isPresent() )
         {
-            jLinkExecutable = tc.findTool( "jlink" );
+            throw new IllegalStateException( "No jlink tool found." );
         }
 
-        // TODO: Check if there exist a more elegant way?
-        String jLinkCommand = "jlink" + ( SystemUtils.IS_OS_WINDOWS ? ".exe" : "" );
-
-        File jLinkExe;
-
-        if ( StringUtils.isNotEmpty( jLinkExecutable ) )
-        {
-            jLinkExe = new File( jLinkExecutable );
-
-            if ( jLinkExe.isDirectory() )
-            {
-                jLinkExe = new File( jLinkExe, jLinkCommand );
-            }
-
-            if ( SystemUtils.IS_OS_WINDOWS && jLinkExe.getName().indexOf( '.' ) < 0 )
-            {
-                jLinkExe = new File( jLinkExe.getPath() + ".exe" );
-            }
-
-            if ( !jLinkExe.isFile() )
-            {
-                throw new IOException( "The jlink executable '" + jLinkExe + "' doesn't exist or is not a file." );
-            }
-            return jLinkExe.getAbsolutePath();
-        }
-
-        // ----------------------------------------------------------------------
-        // Try to find jlink from System.getProperty( "java.home" )
-        // By default, System.getProperty( "java.home" ) = JRE_HOME and JRE_HOME
-        // should be in the JDK_HOME
-        // ----------------------------------------------------------------------
-        jLinkExe = new File( SystemUtils.getJavaHome() + File.separator + ".." + File.separator + "bin", jLinkCommand );
-
-        // ----------------------------------------------------------------------
-        // Try to find javadocExe from JAVA_HOME environment variable
-        // ----------------------------------------------------------------------
-        if ( !jLinkExe.exists() || !jLinkExe.isFile() )
-        {
-            Properties env = CommandLineUtils.getSystemEnvVars();
-            String javaHome = env.getProperty( "JAVA_HOME" );
-            if ( StringUtils.isEmpty( javaHome ) )
-            {
-                throw new IOException( "The environment variable JAVA_HOME is not correctly set." );
-            }
-            if ( !new File( javaHome ).getCanonicalFile().exists()
-                || new File( javaHome ).getCanonicalFile().isFile() )
-            {
-                throw new IOException( "The environment variable JAVA_HOME=" + javaHome
-                    + " doesn't exist or is not a valid directory." );
-            }
-
-            jLinkExe = new File( javaHome + File.separator + "bin", jLinkCommand );
-        }
-
-        if ( !jLinkExe.getCanonicalFile().exists() || !jLinkExe.getCanonicalFile().isFile() )
-        {
-            throw new IOException( "The jlink executable '" + jLinkExe
-                + "' doesn't exist or is not a file. Verify the JAVA_HOME environment variable." );
-        }
-
-        return jLinkExe.getAbsolutePath();
+        return jlink.orElseThrow( NoSuchElementException::new );
     }
 
-    protected void executeCommand( Commandline cmd, File outputDirectory )
-        throws MojoExecutionException
+    protected void executeCommand( ToolProvider toolProvider, File outputDirectory, String... args ) throws MojoExecutionException
     {
+        String argsAsString = String.join( ",", args ).replaceAll( "'", "" );
+
+        List<String> actualArgs = Arrays.stream( args ).flatMap( this::argsfileToArgs ).collect( Collectors.toList() );
+
         if ( getLog().isDebugEnabled() )
         {
             // no quoted arguments ???
-            getLog().debug( CommandLineUtils.toString( cmd.getCommandline() ).replaceAll( "'", "" ) );
+            getLog().debug( toolProvider.name() + " " + actualArgs );
         }
 
-        CommandLineUtils.StringStreamConsumer err = new CommandLineUtils.StringStreamConsumer();
-        CommandLineUtils.StringStreamConsumer out = new CommandLineUtils.StringStreamConsumer();
-        try
+        try ( ByteArrayOutputStream baosErr = new ByteArrayOutputStream();
+              PrintWriter err = new PrintWriter( baosErr );
+              ByteArrayOutputStream baosOut = new ByteArrayOutputStream();
+              PrintWriter out = new PrintWriter( baosOut ) )
         {
-            int exitCode = CommandLineUtils.executeCommandLine( cmd, out, err );
+            int exitCode = toolProvider.run( out, err, actualArgs.toArray( new String[0] ) );
+            out.flush();
+            err.flush();
 
-            String output = ( StringUtils.isEmpty( out.getOutput() ) ? null : '\n' + out.getOutput().trim() );
+            String outAsString = baosOut.toString( "UTF-8" );
+            String output = ( StringUtils.isEmpty( outAsString ) ? null : '\n' + outAsString.trim() );
 
             if ( exitCode != 0 )
             {
-
                 if ( StringUtils.isNotEmpty( output ) )
                 {
                     // Reconsider to use WARN / ERROR ?
-                   //  getLog().error( output );
+                    //  getLog().error( output );
                     for ( String outputLine : output.split( "\n" ) )
                     {
                         getLog().error( outputLine );
@@ -172,12 +123,14 @@ public abstract class AbstractJLinkMojo
 
                 StringBuilder msg = new StringBuilder( "\nExit code: " );
                 msg.append( exitCode );
-                if ( StringUtils.isNotEmpty( err.getOutput() ) )
+                String errAsString = baosErr.toString();
+                if ( StringUtils.isNotEmpty( errAsString ) )
                 {
-                    msg.append( " - " ).append( err.getOutput() );
+                    msg.append( " - " ).append( errAsString );
                 }
                 msg.append( '\n' );
-                msg.append( "Command line was: " ).append( cmd ).append( '\n' ).append( '\n' );
+                msg.append( "Command line was: " ).append( toolProvider.name() ).append( ' ' ).append(
+                        actualArgs ).append( '\n' ).append( '\n' );
 
                 throw new MojoExecutionException( msg.toString() );
             }
@@ -191,9 +144,42 @@ public abstract class AbstractJLinkMojo
                 }
             }
         }
-        catch ( CommandLineException e )
+        catch ( IOException e )
         {
             throw new MojoExecutionException( "Unable to execute jlink command: " + e.getMessage(), e );
+        }
+
+    }
+
+    private Stream<String> argsfileToArgs( String arg )
+    {
+        if ( !arg.startsWith( "@" ) )
+        {
+            return Stream.of( arg );
+        }
+
+        try
+        {
+            List<String> strings = Files.readAllLines( Paths.get( arg.substring( 1 ) ) );
+            Deque<String> out = new ArrayDeque<>();
+
+            for ( String line : strings )
+            {
+                if ( line.startsWith( "-" ) )
+                {
+                    out.add( line );
+                    continue;
+                }
+
+                String previous = out.pollLast();
+                out.add( previous + "=" + line + "" );
+            }
+
+            return out.stream();
+        }
+        catch ( IOException e )
+        {
+            throw new IllegalStateException( "Unable to read jlinkArgs file: " + arg );
         }
 
     }
